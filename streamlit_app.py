@@ -366,22 +366,84 @@ if st.button("🔮 Predecir"):
                     )
                 with c2:
                     st.metric("Semana epid.", f"{semana_epidemiologica}")
-                with c3:
-                    st.metric("Fecha elegida", pd.to_datetime(fecha_sem).strftime("%d-%m-%Y"))
+               # with c3:
+                #    st.metric("Fecha elegida", pd.to_datetime(fecha_sem).strftime("%d-%m-%Y"))
 
-                # Badge de nivel de riesgo (usando umbrales de la región)
-                def nivel_riesgo(n, umbrales_region):
-                    if n >= umbrales_region['medio']:
+                # Calcular mes para posibles umbrales por mes (usado luego para caption también)
+                try:
+                    mes_num_for_caption = int(pd.to_datetime(fecha_sem).month)
+                except Exception:
+                    mes_num_for_caption = None
+
+                # Intentar leer umbrales por mes/región (q33/q66) desde el Excel; si no están, usaremos umbrales generales
+                q33_val = None
+                q66_val = None
+                try:
+                    excel_path = "data/UMBRALES POR MES REGION.xlsx"
+                    df_umbr2 = pd.read_excel(excel_path, engine="openpyxl")
+                    df_umbr2.columns = [str(c).strip().lower() for c in df_umbr2.columns]
+                    possible_region_cols = ['clima_region', 'region', 'clima', 'region_nombre']
+                    possible_mes_cols = ['mes', 'mes_nombre', 'mes_name']
+                    region_col = next((c for c in df_umbr2.columns if c in possible_region_cols), None)
+                    mes_col = next((c for c in df_umbr2.columns if c in possible_mes_cols), None)
+                    q33_col = next((c for c in df_umbr2.columns if 'q33' in c), None)
+                    q66_col = next((c for c in df_umbr2.columns if 'q66' in c), None)
+
+                    if region_col and mes_col and q33_col and q66_col and mes_num_for_caption is not None:
+                        df_umbr2[region_col] = df_umbr2[region_col].astype(str).str.strip().str.upper()
+
+                        def _parse_mes(v):
+                            try:
+                                return int(float(v))
+                            except Exception:
+                                s = str(v).strip().lower()
+                                meses = {
+                                    'enero': 1, 'febrero': 2, 'marzo': 3, 'abril': 4, 'mayo': 5, 'junio': 6,
+                                    'january': 1, 'february': 2, 'march': 3, 'april': 4
+                                }
+                                for name, num in meses.items():
+                                    if s.startswith(name[:3]):
+                                        return num
+                            return None
+
+                        df_umbr2['mes_num'] = df_umbr2[mes_col].apply(_parse_mes)
+                        reg_norm = region_seleccionada.strip().upper()
+                        row = df_umbr2[(df_umbr2[region_col] == reg_norm) & (df_umbr2['mes_num'] == mes_num_for_caption)]
+                        if not row.empty:
+                            q33_val = pd.to_numeric(row[q33_col].iloc[0], errors='coerce')
+                            q66_val = pd.to_numeric(row[q66_col].iloc[0], errors='coerce')
+                except Exception:
+                    q33_val = None
+                    q66_val = None
+
+                # Badge de nivel de riesgo: priorizar umbrales por mes (q33/q66) si están presentes
+                def nivel_riesgo(n, umbrales_region, q33=None, q66=None):
+                    # usar umbrales por mes si ambos q33 y q66 son numéricos
+                    try:
+                        if q33 is not None and not pd.isna(q33) and q66 is not None and not pd.isna(q66):
+                            q33_i = int(ceil(float(q33)))
+                            q66_i = int(ceil(float(q66)))
+                            if n > q66_i:
+                                return "🔴 Alto", "#fee2e2"
+                            elif n >= q33_i:
+                                return "🟠 Medio", "#ffedd5"
+                            else:
+                                return "🟢 Bajo", "#dcfce7"
+                    except Exception:
+                        pass
+
+                    # fallback a umbrales por configuración de la región
+                    if n >= umbrales_region.get('medio', 0):
                         return "🔴 Alto", "#fee2e2"
-                    elif n >= umbrales_region['bajo']:
+                    elif n >= umbrales_region.get('bajo', 0):
                         return "🟠 Medio", "#ffedd5"
                     else:
                         return "🟢 Bajo", "#dcfce7"
 
-                etiqueta, color = nivel_riesgo(casos_int, umbrales)
+                etiqueta, color = nivel_riesgo(casos_int, umbrales, q33_val, q66_val)
                 st.markdown(
                     f"""
-                    <div style="
+                    <div style=""
                         display:inline-block;
                         padding:6px 10px;
                         border-radius:999px;
